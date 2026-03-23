@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 
+const GROQ_API_KEY = "YOUR_GROQ_API_KEY_HERE";
+
 const HORIZON = {
   gold:     "#f59e0b",
   orange:   "#f97316",
@@ -28,87 +30,60 @@ const ROLES = {
 
 const AGENT_SYS = `You are Horizon AI running a MULTI-AGENT WORKFLOW. Simulate three agents:
 
-🗂 PLANNER: Break the goal into clear numbered steps.
-⚙ EXECUTOR: Generate the detailed solution for each step.
-🔍 CRITIC: Evaluate output and suggest improvements.
+PLANNER: Break the goal into clear numbered steps.
+EXECUTOR: Generate the detailed solution for each step.
+CRITIC: Evaluate output and suggest improvements.
 
 Format EXACTLY:
 ---
-🗂 PLANNER
+PLANNER
 [numbered steps]
 
-⚙ EXECUTOR
+EXECUTOR
 [detailed solution]
 
-🔍 CRITIC
+CRITIC
 [evaluation + improvements]
 ---`;
 
-const IMG_SYS = `Generate a highly detailed, optimized image prompt for DALL·E, Midjourney, or Stable Diffusion. Include: subject, style, lighting, mood, composition, color palette, technical parameters (e.g. --ar 16:9 --v 6). Make it vivid and professional.`;
+const IMG_SYS = `Generate a highly detailed, optimized image prompt for DALL-E, Midjourney, or Stable Diffusion. Include: subject, style, lighting, mood, composition, color palette, technical parameters (e.g. --ar 16:9 --v 6). Make it vivid and professional.`;
 
-// ─── API call goes to /api/chat (our Vercel backend) ─────────────────────────
 async function callClaude(messages, system, onChunk) {
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': 'Bearer YOUR_GROQ_API_KEY_HERE',
+      'Authorization': `Bearer ${GROQ_API_KEY}`,
     },
     body: JSON.stringify({
       model: 'llama-3.3-70b-versatile',
       max_tokens: 1000,
+      stream: true,
       messages: [
         { role: 'system', content: system },
         ...messages,
       ],
-      stream: true,
     }),
   });
 
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Groq error ${res.status}: ${err}`);
+  }
+
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let full = '';
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     for (const line of dec.decode(value).split('\n')) {
-      if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+      if (line.startsWith('data: ') && !line.includes('[DONE]')) {
         try {
           const d = JSON.parse(line.slice(6));
           const text = d.choices?.[0]?.delta?.content;
           if (text) { full += text; onChunk(full); }
-        } catch {}
-      }
-    }
-  }
-  return full;
-}
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, system }),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let full = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    for (const line of dec.decode(value).split('\n')) {
-      if (line.startsWith('data: ')) {
-        try {
-          const d = JSON.parse(line.slice(6));
-          if (d.type === 'content_block_delta' && d.delta?.text) {
-            full += d.delta.text;
-            onChunk(full);
-          }
         } catch {}
       }
     }
@@ -154,19 +129,19 @@ const STARS = [
 ];
 
 export default function HorizonAI() {
-  const [role, setRole]         = useState('general');
-  const [mode, setMode]         = useState('chat');
-  const [msgs, setMsgs]         = useState([]);
-  const [input, setInput]       = useState('');
-  const [loading, setLoading]   = useState(false);
+  const [role, setRole]           = useState('general');
+  const [mode, setMode]           = useState('chat');
+  const [msgs, setMsgs]           = useState([]);
+  const [input, setInput]         = useState('');
+  const [loading, setLoading]     = useState(false);
   const [streaming, setStreaming] = useState('');
-  const [chats, setChats]       = useState(() => { try { return JSON.parse(localStorage.getItem('horizon_chats') || '[]'); } catch { return []; } });
-  const [cid, setCid]           = useState(null);
-  const [sidebar, setSidebar]   = useState(false);
-  const [wfSteps, setWfSteps]   = useState([]);
-  const [wfStep, setWfStep]     = useState(0);
-  const [voiceOn, setVoiceOn]   = useState(false);
-  const [settings, setSettings] = useState(false);
+  const [chats, setChats]         = useState(() => { try { return JSON.parse(localStorage.getItem('horizon_chats') || '[]'); } catch { return []; } });
+  const [cid, setCid]             = useState(null);
+  const [sidebar, setSidebar]     = useState(false);
+  const [wfSteps, setWfSteps]     = useState([]);
+  const [wfStep, setWfStep]       = useState(0);
+  const [voiceOn, setVoiceOn]     = useState(false);
+  const [settings, setSettings]   = useState(false);
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
   const srRef     = useRef(null);
@@ -215,7 +190,7 @@ export default function HorizonAI() {
       if (!cid) setCid(chatId);
       setChats(p => { const ex=p.find(c=>c.id===chatId); if(ex) return p.map(c=>c.id===chatId?{...c,messages:done,title:c.title==='New Chat'?text.slice(0,38):c.title}:c); return [{id:chatId,title:text.slice(0,38),messages:done,role,mode,ts:Date.now()},...p]; });
     } catch(err) {
-      setMsgs(p=>[...p,{id:Math.random().toString(36).slice(2),role:'assistant',content:`⚠️ Error: ${err.message}`}]);
+      setMsgs(p=>[...p,{id:Math.random().toString(36).slice(2),role:'assistant',content:`Error: ${err.message}`}]);
       setStreaming('');
     }
     setLoading(false);
@@ -233,7 +208,7 @@ export default function HorizonAI() {
       setWfSteps(steps); setWfStep(0);
       const a = { id:Math.random().toString(36).slice(2), role:'assistant', content:`**Workflow Plan (${steps.length} steps):**\n\n${steps.map((s,i)=>`${i+1}. ${s}`).join('\n')}\n\n**Step 1 is ready — hit Execute to begin.**` };
       setMsgs([...nm,a]); setStreaming(''); setMode('workflow');
-    } catch(err) { setMsgs(p=>[...p,{id:Math.random().toString(36).slice(2),role:'assistant',content:`⚠️ ${err.message}`}]); setStreaming(''); }
+    } catch(err) { setMsgs(p=>[...p,{id:Math.random().toString(36).slice(2),role:'assistant',content:`Error: ${err.message}`}]); setStreaming(''); }
     setLoading(false);
   };
 
@@ -251,7 +226,7 @@ export default function HorizonAI() {
       const a = { id:Math.random().toString(36).slice(2), role:'assistant', content:final+suffix };
       setMsgs([...nm,a]); setStreaming('');
       if (!done) setWfStep(next); else { setWfSteps([]); setWfStep(0); setMode('chat'); }
-    } catch(err) { setMsgs(p=>[...p,{id:Math.random().toString(36).slice(2),role:'assistant',content:`⚠️ ${err.message}`}]); setStreaming(''); }
+    } catch(err) { setMsgs(p=>[...p,{id:Math.random().toString(36).slice(2),role:'assistant',content:`Error: ${err.message}`}]); setStreaming(''); }
     setLoading(false);
   };
 
@@ -261,7 +236,6 @@ export default function HorizonAI() {
 
   return (
     <div style={{ display:'flex', height:'100vh', color:HORIZON.text, fontFamily:"'Inter',system-ui,sans-serif", overflow:'hidden', position:'relative' }}>
-
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
         *{box-sizing:border-box;margin:0;padding:0}
@@ -297,10 +271,10 @@ export default function HorizonAI() {
       <div style={{ width:sidebar?265:0, minWidth:sidebar?265:0, background:'rgba(8,6,22,0.88)', borderRight:`1px solid ${HORIZON.border}`, transition:'all 0.25s ease', overflow:'hidden', display:'flex', flexDirection:'column', flexShrink:0, zIndex:20, backdropFilter:'blur(24px)' }}>
         <div style={{ width:265, display:'flex', flexDirection:'column', height:'100%', padding:'18px 13px' }}>
           <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:20 }}>
-            <div style={{ width:30, height:30, borderRadius:8, background:HORIZON.grad, display:'flex', alignItems:'center', justifyContent:'center', fontSize:14, fontWeight:800, color:'#fff', boxShadow:'0 0 16px rgba(249,115,22,0.4)' }}>H</div>
+            <div style={{ width:30, height:30, borderRadius:8, background:HORIZON.grad, display:'flex', alignItems:'center', justifyContent:'center', fontSize:14, fontWeight:800, color:'#fff' }}>H</div>
             <span style={{ fontWeight:800, fontSize:15, background:HORIZON.grad, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>Horizon AI</span>
           </div>
-          <button className="hbtn" style={{ ...Btn(HORIZON.gradBtn), justifyContent:'center', width:'100%', marginBottom:18, boxShadow:'0 0 22px rgba(249,115,22,0.3)' }} onClick={newChat}>+ New Chat</button>
+          <button className="hbtn" style={{ ...Btn(HORIZON.gradBtn), justifyContent:'center', width:'100%', marginBottom:18 }} onClick={newChat}>+ New Chat</button>
           <div style={{ fontSize:10, color:HORIZON.muted, fontWeight:700, textTransform:'uppercase', letterSpacing:1.2, marginBottom:8 }}>Conversations ({chats.length})</div>
           <div style={{ flex:1, overflowY:'auto' }}>
             {chats.length===0 && <div style={{ color:HORIZON.muted, fontSize:13, textAlign:'center', marginTop:24 }}>No chats yet</div>}
@@ -310,41 +284,40 @@ export default function HorizonAI() {
                   <div style={{ fontSize:13, color:HORIZON.text, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{c.title}</div>
                   <div style={{ fontSize:11, color:HORIZON.muted, marginTop:1 }}>{ROLES[c.role]?.icon} {ROLES[c.role]?.label}</div>
                 </div>
-                <button onClick={e=>delChat(c.id,e)} style={{ background:'none', border:'none', color:HORIZON.muted, cursor:'pointer', fontSize:14, padding:'0 2px', flexShrink:0 }}>✕</button>
+                <button onClick={e=>delChat(c.id,e)} style={{ background:'none', border:'none', color:HORIZON.muted, cursor:'pointer', fontSize:14, padding:'0 2px', flexShrink:0 }}>x</button>
               </div>
             ))}
           </div>
           <div style={{ paddingTop:12, borderTop:`1px solid ${HORIZON.border}`, textAlign:'center' }}>
-            <div style={{ fontSize:11, color:HORIZON.muted }}>Horizon AI v2.0 — Free & Open</div>
+            <div style={{ fontSize:11, color:HORIZON.muted }}>Horizon AI v2.0</div>
           </div>
         </div>
       </div>
 
       {/* MAIN */}
       <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minWidth:0, zIndex:10, position:'relative' }}>
-
         {/* Header */}
         <div style={{ padding:'11px 16px', borderBottom:`1px solid ${HORIZON.border}`, display:'flex', alignItems:'center', gap:10, background:'rgba(8,6,22,0.75)', flexShrink:0, backdropFilter:'blur(24px)' }}>
-          <button onClick={()=>setSidebar(s=>!s)} style={{ background:'none', border:'none', color:HORIZON.muted, cursor:'pointer', fontSize:20, lineHeight:1, padding:2 }}>☰</button>
+          <button onClick={()=>setSidebar(s=>!s)} style={{ background:'none', border:'none', color:HORIZON.muted, cursor:'pointer', fontSize:20, lineHeight:1, padding:2 }}>|||</button>
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
             <div style={{ width:26, height:26, borderRadius:7, background:HORIZON.grad, display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:800, color:'#fff' }}>H</div>
             <span style={{ fontSize:16, fontWeight:800, background:HORIZON.grad, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>Horizon AI</span>
           </div>
           <div style={{ flex:1 }} />
-          <select value={role} onChange={e=>setRole(e.target.value)} style={{ background:'rgba(18,16,42,0.8)', border:`1px solid ${HORIZON.border}`, color:HORIZON.text, borderRadius:9, padding:'6px 10px', fontSize:13, cursor:'pointer', fontFamily:'inherit', backdropFilter:'blur(8px)' }}>
+          <select value={role} onChange={e=>setRole(e.target.value)} style={{ background:'rgba(18,16,42,0.8)', border:`1px solid ${HORIZON.border}`, color:HORIZON.text, borderRadius:9, padding:'6px 10px', fontSize:13, cursor:'pointer', fontFamily:'inherit' }}>
             {Object.entries(ROLES).map(([k,r]) => <option key={k} value={k}>{r.icon} {r.label}</option>)}
           </select>
           <div style={{ width:9, height:9, borderRadius:'50%', background:rc, boxShadow:`0 0 10px ${rc}`, flexShrink:0, animation:'hglow 2s infinite' }} />
         </div>
 
         {/* Mode pills */}
-        <div style={{ padding:'8px 16px', display:'flex', gap:6, borderBottom:`1px solid ${HORIZON.border}`, background:'rgba(8,6,22,0.6)', flexWrap:'wrap', alignItems:'center', backdropFilter:'blur(20px)' }}>
+        <div style={{ padding:'8px 16px', display:'flex', gap:6, borderBottom:`1px solid ${HORIZON.border}`, background:'rgba(8,6,22,0.6)', flexWrap:'wrap', alignItems:'center' }}>
           {[['chat','Chat'],['agent','Multi-Agent'],['image','Image Prompt'],['workflow','Workflow']].map(([m,l]) => (
             <button key={m} style={Pill(mode===m,rc)} onClick={()=>setMode(m)}>{l}</button>
           ))}
           <div style={{ flex:1 }} />
-          <button onClick={()=>{ if(srRef.current){setVoiceOn(true);srRef.current.start();} }} style={{ ...Pill(voiceOn,'#ec4899'), animation:voiceOn?'hbounce 1s infinite':'none' }}>
-            {voiceOn ? '● Listening' : '♦ Voice'}
+          <button onClick={()=>{ if(srRef.current){setVoiceOn(true);srRef.current.start();} }} style={{ ...Pill(voiceOn,'#ec4899') }}>
+            {voiceOn ? 'Listening...' : 'Voice'}
           </button>
         </div>
 
@@ -353,34 +326,34 @@ export default function HorizonAI() {
           {msgs.length===0 && (
             <div style={{ textAlign:'center', paddingTop:50 }}>
               <div style={{ width:80, height:80, borderRadius:'50%', background:HORIZON.grad, margin:'0 auto 18px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:30, fontWeight:800, color:'#fff', boxShadow:'0 0 50px rgba(249,115,22,0.55)' }}>H</div>
-              <div style={{ fontSize:28, fontWeight:800, background:'linear-gradient(135deg,#fde68a,#f59e0b,#f97316,#fb7185,#c084fc)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', marginBottom:8, filter:'drop-shadow(0 0 25px rgba(249,115,22,0.5))' }}>Horizon AI</div>
+              <div style={{ fontSize:28, fontWeight:800, background:'linear-gradient(135deg,#fde68a,#f59e0b,#f97316,#fb7185,#c084fc)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', marginBottom:8 }}>Horizon AI</div>
               <div style={{ color:HORIZON.muted, fontSize:14, marginBottom:4 }}>
-                <span style={{ color:rc, fontWeight:600 }}>{R.icon} {R.label}</span>&nbsp;·&nbsp;<span style={{ color:HORIZON.muted }}>{mode} mode</span>
+                <span style={{ color:rc, fontWeight:600 }}>{R.icon} {R.label}</span> · <span>{mode} mode</span>
               </div>
               <div style={{ color:HORIZON.muted, fontSize:13, maxWidth:380, margin:'12px auto 0', lineHeight:1.75 }}>
-                {mode==='agent' && 'Multi-Agent pipeline: Planner → Executor → Critic. Submit any complex task.'}
-                {mode==='image' && "Describe your vision and I'll craft a pro-grade image prompt for any AI image tool."}
-                {mode==='workflow' && "Enter a goal and I'll plan it, then guide you step-by-step through execution."}
-                {mode==='chat' && 'Ask me anything. I fully adapt to your selected role and deliver structured, high-quality outputs.'}
+                {mode==='agent' && 'Multi-Agent: Planner, Executor, Critic pipeline.'}
+                {mode==='image' && 'Describe your vision for a pro image prompt.'}
+                {mode==='workflow' && 'Enter a goal and I will plan and guide execution.'}
+                {mode==='chat' && 'Ask me anything. I adapt to your selected role.'}
               </div>
               <div style={{ display:'flex', flexWrap:'wrap', gap:8, justifyContent:'center', marginTop:24, maxWidth:500, margin:'24px auto 0' }}>
                 {starters.map(s => (
-                  <button key={s} className="starter" onClick={()=>{setInput(s);inputRef.current?.focus();}} style={{ background:'rgba(18,16,42,0.65)', border:`1px solid ${HORIZON.border}`, borderRadius:20, padding:'6px 14px', color:HORIZON.sub, cursor:'pointer', fontSize:12, fontWeight:500, transition:'all 0.15s', backdropFilter:'blur(10px)' }}>{s}</button>
+                  <button key={s} className="starter" onClick={()=>{setInput(s);inputRef.current?.focus();}} style={{ background:'rgba(18,16,42,0.65)', border:`1px solid ${HORIZON.border}`, borderRadius:20, padding:'6px 14px', color:HORIZON.sub, cursor:'pointer', fontSize:12, fontWeight:500, transition:'all 0.15s' }}>{s}</button>
                 ))}
               </div>
             </div>
           )}
           {msgs.map(m => <Msg key={m.id} m={m} rc={rc} />)}
           {loading && streaming && (
-            <div style={{ display:'flex', gap:10, marginBottom:18, alignItems:'flex-start', animation:'hfade 0.2s' }}>
-              <div style={{ width:34, height:34, borderRadius:'50%', background:`${rc}22`, border:`1.5px solid ${rc}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, color:rc, fontWeight:700, flexShrink:0, backdropFilter:'blur(8px)' }}>H</div>
-              <div style={{ maxWidth:'80%', background:'rgba(12,10,26,0.72)', border:`1px solid ${rc}35`, borderRadius:'3px 16px 16px 16px', padding:'11px 15px', color:HORIZON.text, fontSize:14, lineHeight:1.7, backdropFilter:'blur(14px)' }} dangerouslySetInnerHTML={{ __html:fmt(streaming) }} />
+            <div style={{ display:'flex', gap:10, marginBottom:18, alignItems:'flex-start' }}>
+              <div style={{ width:34, height:34, borderRadius:'50%', background:`${rc}22`, border:`1.5px solid ${rc}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, color:rc, fontWeight:700, flexShrink:0 }}>H</div>
+              <div style={{ maxWidth:'80%', background:'rgba(12,10,26,0.72)', border:`1px solid ${rc}35`, borderRadius:'3px 16px 16px 16px', padding:'11px 15px', color:HORIZON.text, fontSize:14, lineHeight:1.7 }} dangerouslySetInnerHTML={{ __html:fmt(streaming) }} />
             </div>
           )}
           {loading && !streaming && (
             <div style={{ display:'flex', gap:10, alignItems:'flex-start' }}>
-              <div style={{ width:34, height:34, borderRadius:'50%', background:`${rc}22`, border:`1.5px solid ${rc}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, color:rc, fontWeight:700, backdropFilter:'blur(8px)' }}>H</div>
-              <div style={{ background:'rgba(12,10,26,0.72)', border:`1px solid ${rc}35`, borderRadius:'3px 16px 16px 16px', backdropFilter:'blur(14px)' }}><Dots color={rc} /></div>
+              <div style={{ width:34, height:34, borderRadius:'50%', background:`${rc}22`, border:`1.5px solid ${rc}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, color:rc, fontWeight:700 }}>H</div>
+              <div style={{ background:'rgba(12,10,26,0.72)', border:`1px solid ${rc}35`, borderRadius:'3px 16px 16px 16px' }}><Dots color={rc} /></div>
             </div>
           )}
           <div ref={bottomRef} />
@@ -388,56 +361,56 @@ export default function HorizonAI() {
 
         {/* Workflow bar */}
         {wfSteps.length>0 && (
-          <div style={{ padding:'9px 16px', background:'rgba(8,6,22,0.75)', borderTop:`1px solid ${HORIZON.border}`, display:'flex', alignItems:'center', gap:10, backdropFilter:'blur(20px)' }}>
-            <span style={{ color:HORIZON.sub, fontSize:13, flexShrink:0, fontWeight:500 }}>Step {wfStep+1}/{wfSteps.length}</span>
+          <div style={{ padding:'9px 16px', background:'rgba(8,6,22,0.75)', borderTop:`1px solid ${HORIZON.border}`, display:'flex', alignItems:'center', gap:10 }}>
+            <span style={{ color:HORIZON.sub, fontSize:13, flexShrink:0 }}>Step {wfStep+1}/{wfSteps.length}</span>
             <div style={{ flex:1, background:'rgba(26,23,48,0.6)', borderRadius:4, height:5 }}>
               <div style={{ width:`${(wfStep/wfSteps.length)*100}%`, height:'100%', background:HORIZON.gradBtn, borderRadius:4, transition:'width 0.4s' }} />
             </div>
             <button className="hbtn" style={Btn(loading?'rgba(42,37,80,0.7)':HORIZON.gradBtn,true)} onClick={execStep} disabled={loading}>
-              {loading ? 'Running…' : `Execute Step ${wfStep+1}`}
+              {loading ? 'Running...' : `Execute Step ${wfStep+1}`}
             </button>
           </div>
         )}
 
         {/* Input */}
-        <div style={{ padding:'12px 16px', borderTop:`1px solid ${HORIZON.border}`, background:'rgba(8,6,22,0.75)', flexShrink:0, backdropFilter:'blur(24px)' }}>
+        <div style={{ padding:'12px 16px', borderTop:`1px solid ${HORIZON.border}`, background:'rgba(8,6,22,0.75)', flexShrink:0 }}>
           <div style={{ display:'flex', gap:8, alignItems:'flex-end' }}>
             <textarea
               ref={inputRef}
               value={input}
               onChange={e=>setInput(e.target.value)}
               onKeyDown={e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();mode==='workflow'&&wfSteps.length===0?planWf():send();} }}
-              placeholder={mode==='image'?'Describe what you want to visualise…':mode==='agent'?'Enter a complex task…':mode==='workflow'&&wfSteps.length===0?'Enter your goal…':`Ask ${R.label}…`}
-              style={{ flex:1, background:'rgba(18,16,42,0.8)', border:`1.5px solid rgba(42,37,80,0.7)`, borderRadius:13, padding:'11px 15px', color:HORIZON.text, fontSize:14, resize:'none', fontFamily:'inherit', lineHeight:1.55, minHeight:46, maxHeight:130, transition:'border-color 0.2s', backdropFilter:'blur(12px)' }}
+              placeholder={mode==='image'?'Describe what you want to visualise...':mode==='agent'?'Enter a complex task...':mode==='workflow'&&wfSteps.length===0?'Enter your goal...':`Ask ${R.label}...`}
+              style={{ flex:1, background:'rgba(18,16,42,0.8)', border:`1.5px solid rgba(42,37,80,0.7)`, borderRadius:13, padding:'11px 15px', color:HORIZON.text, fontSize:14, resize:'none', fontFamily:'inherit', lineHeight:1.55, minHeight:46, maxHeight:130, transition:'border-color 0.2s' }}
               rows={1}
             />
             {mode==='workflow' && wfSteps.length===0 && (
               <button className="hbtn" style={Btn(HORIZON.gradCool)} onClick={planWf} disabled={loading||!input.trim()}>Plan</button>
             )}
             <button className="hbtn" style={{ ...Btn(loading?'rgba(42,37,80,0.7)':HORIZON.gradBtn), boxShadow:loading?'none':'0 0 18px rgba(249,115,22,0.4)' }} onClick={()=>send()} disabled={loading||!input.trim()}>
-              {loading ? '…' : 'Send'}
+              {loading ? '...' : 'Send'}
             </button>
-            <button className="hbtn" style={{ background:voiceOn?'#ec4899':'rgba(18,16,42,0.8)', border:`1.5px solid ${voiceOn?'#ec4899':HORIZON.border}`, borderRadius:12, padding:'11px 14px', color:'#fff', cursor:'pointer', fontSize:14, transition:'all 0.15s', backdropFilter:'blur(8px)' }} onClick={()=>{ if(srRef.current){setVoiceOn(true);srRef.current.start();} }}>
-              {voiceOn ? '●' : '♦'}
+            <button className="hbtn" style={{ background:voiceOn?'#ec4899':'rgba(18,16,42,0.8)', border:`1.5px solid ${voiceOn?'#ec4899':HORIZON.border}`, borderRadius:12, padding:'11px 14px', color:'#fff', cursor:'pointer', fontSize:14, transition:'all 0.15s' }} onClick={()=>{ if(srRef.current){setVoiceOn(true);srRef.current.start();} }}>
+              {voiceOn ? 'O' : 'V'}
             </button>
           </div>
-          <div style={{ textAlign:'center', marginTop:6, color:HORIZON.muted, fontSize:11 }}>{R.icon} {R.label} · Enter to send · Shift+Enter for new line · 100% free</div>
+          <div style={{ textAlign:'center', marginTop:6, color:HORIZON.muted, fontSize:11 }}>{R.icon} {R.label} · Enter to send · Shift+Enter new line</div>
         </div>
       </div>
 
       {/* Settings FAB */}
-      <button onClick={()=>setSettings(true)} style={{ position:'fixed', bottom:20, right:20, background:'rgba(18,16,42,0.85)', border:`1px solid ${HORIZON.border}`, borderRadius:'50%', width:42, height:42, color:HORIZON.sub, cursor:'pointer', fontSize:17, display:'flex', alignItems:'center', justifyContent:'center', zIndex:40, backdropFilter:'blur(12px)' }}>⚙</button>
+      <button onClick={()=>setSettings(true)} style={{ position:'fixed', bottom:20, right:20, background:'rgba(18,16,42,0.85)', border:`1px solid ${HORIZON.border}`, borderRadius:'50%', width:42, height:42, color:HORIZON.sub, cursor:'pointer', fontSize:17, display:'flex', alignItems:'center', justifyContent:'center', zIndex:40 }}>S</button>
 
       {/* Settings modal */}
       {settings && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.65)', zIndex:50, display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(8px)' }} onClick={()=>setSettings(false)}>
-          <div style={{ background:'rgba(12,10,26,0.96)', border:`1px solid ${HORIZON.border}`, borderRadius:18, padding:26, width:330, maxWidth:'90vw', backdropFilter:'blur(24px)' }} onClick={e=>e.stopPropagation()}>
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.65)', zIndex:50, display:'flex', alignItems:'center', justifyContent:'center' }} onClick={()=>setSettings(false)}>
+          <div style={{ background:'rgba(12,10,26,0.96)', border:`1px solid ${HORIZON.border}`, borderRadius:18, padding:26, width:330, maxWidth:'90vw' }} onClick={e=>e.stopPropagation()}>
             <div style={{ fontWeight:800, fontSize:17, background:HORIZON.grad, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', marginBottom:4 }}>Settings</div>
             <div style={{ color:HORIZON.muted, fontSize:13, marginBottom:18 }}>Manage your Horizon AI session.</div>
-            <div style={{ fontSize:13, color:HORIZON.sub, marginBottom:6 }}>Version: <strong style={{ color:HORIZON.text }}>2.0 (Phase 1+2)</strong></div>
+            <div style={{ fontSize:13, color:HORIZON.sub, marginBottom:6 }}>Version: <strong style={{ color:HORIZON.text }}>2.0</strong></div>
             <div style={{ fontSize:13, color:HORIZON.sub, marginBottom:18 }}>Saved chats: <strong style={{ color:HORIZON.text }}>{chats.length}</strong></div>
             <button className="hbtn" style={{ ...Btn('#ef4444'), width:'100%', justifyContent:'center' }} onClick={()=>{ setChats([]); setMsgs([]); setCid(null); setSettings(false); }}>Clear All History</button>
-            <button className="hbtn" style={{ ...Btn('rgba(42,37,80,0.8)'), width:'100%', justifyContent:'center', marginTop:8, border:`1px solid ${HORIZON.border}` }} onClick={()=>setSettings(false)}>Close</button>
+            <button className="hbtn" style={{ ...Btn('rgba(42,37,80,0.8)'), width:'100%', justifyContent:'center', marginTop:8 }} onClick={()=>setSettings(false)}>Close</button>
           </div>
         </div>
       )}
