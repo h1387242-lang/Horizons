@@ -48,7 +48,42 @@ const IMG_SYS = `Generate a highly detailed, optimized image prompt for DALL·E,
 
 // ─── API call goes to /api/chat (our Vercel backend) ─────────────────────────
 async function callClaude(messages, system, onChunk) {
-  const res = await fetch('/api/chat', {
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer YOUR_GROQ_API_KEY_HERE',
+    },
+    body: JSON.stringify({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 1000,
+      messages: [
+        { role: 'system', content: system },
+        ...messages,
+      ],
+      stream: true,
+    }),
+  });
+
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let full = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    for (const line of dec.decode(value).split('\n')) {
+      if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+        try {
+          const d = JSON.parse(line.slice(6));
+          const text = d.choices?.[0]?.delta?.content;
+          if (text) { full += text; onChunk(full); }
+        } catch {}
+      }
+    }
+  }
+  return full;
+}
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages, system }),
