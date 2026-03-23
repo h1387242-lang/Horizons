@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 
-const GROQ_KEY = 'YOUR_GROQ_API_KEY_HERE'
+const GROQ_KEY = 'import.meta.env.VITE'
 
 const H = {
   grad: 'linear-gradient(135deg,#f59e0b,#f97316,#fb7185)',
