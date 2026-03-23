@@ -1,419 +1,397 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback } from 'react'
 
-const GROQ_API_KEY = "YOUR_GROQ_API_KEY_HERE";
+const GROQ_KEY = 'YOUR_GROQ_API_KEY_HERE'
 
-const HORIZON = {
-  gold:     "#f59e0b",
-  orange:   "#f97316",
-  rose:     "#fb7185",
-  violet:   "#8b5cf6",
-  sky:      "#38bdf8",
-  grad:     "linear-gradient(135deg, #f59e0b, #f97316, #fb7185)",
-  gradBtn:  "linear-gradient(135deg, #f97316, #fb7185)",
-  gradCool: "linear-gradient(135deg, #8b5cf6, #38bdf8)",
-  surface:  "rgba(18,16,42,0.82)",
-  panel:    "rgba(26,23,48,0.85)",
-  border:   "rgba(42,37,80,0.7)",
-  muted:    "#6b6890",
-  text:     "#e8e6f0",
-  sub:      "#9896b0",
-};
+const H = {
+  grad: 'linear-gradient(135deg,#f59e0b,#f97316,#fb7185)',
+  gBtn: 'linear-gradient(135deg,#f97316,#fb7185)',
+  gCool:'linear-gradient(135deg,#8b5cf6,#38bdf8)',
+  bdr:  'rgba(42,37,80,0.7)',
+  mut:  '#6b6890',
+  txt:  '#e8e6f0',
+  sub:  '#9896b0',
+}
 
 const ROLES = {
-  general:    { label:"General Assistant",  icon:"◎", color:HORIZON.sky,    system:"You are Horizon AI – a balanced, structured, highly capable general assistant. Provide clear, organized, actionable responses. Use headers and bullet points where helpful. Always be practical and concise." },
-  mentor:     { label:"Ruthless Mentor",    icon:"△", color:HORIZON.rose,   system:"You are Horizon AI in RUTHLESS MENTOR mode. Be brutally honest, direct, high standards. Call out weak thinking. Push harder. No sugar-coating. Short punchy sentences. End with a challenge or call to action." },
-  strategist: { label:"Strategist",         icon:"◈", color:HORIZON.gold,   system:"You are Horizon AI in STRATEGIST mode. Think in systems and leverage points. Structure every response: Situation → Options → Recommended Action → Risks. Use numbered steps. Optimize for results." },
-  business:   { label:"Business Advisor",   icon:"◇", color:"#34d399",      system:"You are Horizon AI in BUSINESS ADVISOR mode. Focus on ideas, systems, revenue, growth. Think like a top-tier consultant. Structure: Opportunity → Strategy → Execution Steps → Expected Outcome." },
-  creative:   { label:"Creative Generator", icon:"✦", color:HORIZON.orange, system:"You are Horizon AI in CREATIVE GENERATOR mode. Brainstorm freely, generate bold ideas. Give 3-5 diverse options whenever possible. Be energetic and inspiring." },
-  wingman:    { label:"Virtual Wingman",    icon:"◉", color:HORIZON.violet, system:"You are Horizon AI in VIRTUAL WINGMAN mode. Social advice, communication coaching, confidence building. Cool, casual, direct. Give real-world scripts the user can use immediately." },
-};
+  general:    { label:'General Assistant',  icon:'*', color:'#38bdf8', system:'You are Horizon AI, a balanced helpful assistant. Give clear structured responses.' },
+  mentor:     { label:'Ruthless Mentor',    icon:'!', color:'#fb7185', system:'You are Horizon AI in RUTHLESS MENTOR mode. Be brutally honest and direct. High standards. No fluff. End with a challenge.' },
+  strategist: { label:'Strategist',         icon:'#', color:'#f59e0b', system:'You are Horizon AI in STRATEGIST mode. Think in systems. Structure: Situation, Options, Action, Risks.' },
+  business:   { label:'Business Advisor',   icon:'$', color:'#34d399', system:'You are Horizon AI in BUSINESS ADVISOR mode. Focus on revenue and growth. Structure: Opportunity, Strategy, Execution, Outcome.' },
+  creative:   { label:'Creative Generator', icon:'+', color:'#f97316', system:'You are Horizon AI in CREATIVE mode. Generate bold ideas. Give 3-5 diverse options. Be inspiring.' },
+  wingman:    { label:'Virtual Wingman',    icon:'@', color:'#8b5cf6', system:'You are Horizon AI in WINGMAN mode. Social advice and confidence coaching. Give real scripts to use.' },
+}
 
-const AGENT_SYS = `You are Horizon AI running a MULTI-AGENT WORKFLOW. Simulate three agents:
+const AGENT = 'You are Horizon AI. Simulate three agents:\nPLANNER: numbered steps\nEXECUTOR: detailed solution\nCRITIC: evaluation\n\nFormat:\n---\nPLANNER\n[steps]\n\nEXECUTOR\n[solution]\n\nCRITIC\n[evaluation]\n---'
+const IMGPROMPT = 'Generate a detailed image prompt for Midjourney or DALL-E. Include subject, style, lighting, mood, color palette, and parameters like --ar 16:9.'
 
-PLANNER: Break the goal into clear numbered steps.
-EXECUTOR: Generate the detailed solution for each step.
-CRITIC: Evaluate output and suggest improvements.
-
-Format EXACTLY:
----
-PLANNER
-[numbered steps]
-
-EXECUTOR
-[detailed solution]
-
-CRITIC
-[evaluation + improvements]
----`;
-
-const IMG_SYS = `Generate a highly detailed, optimized image prompt for DALL-E, Midjourney, or Stable Diffusion. Include: subject, style, lighting, mood, composition, color palette, technical parameters (e.g. --ar 16:9 --v 6). Make it vivid and professional.`;
-
-async function callClaude(messages, system, onChunk) {
+async function ask(messages, system, onChunk) {
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${GROQ_API_KEY}`,
+      'Authorization': 'Bearer ' + GROQ_KEY,
     },
     body: JSON.stringify({
       model: 'llama-3.3-70b-versatile',
       max_tokens: 1000,
       stream: true,
-      messages: [
-        { role: 'system', content: system },
-        ...messages,
-      ],
+      messages: [{ role: 'system', content: system }].concat(messages),
     }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Groq error ${res.status}: ${err}`);
-  }
-
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let full = '';
-
+  })
+  if (!res.ok) throw new Error('API error ' + res.status)
+  const reader = res.body.getReader()
+  const dec = new TextDecoder()
+  let full = ''
   while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    for (const line of dec.decode(value).split('\n')) {
-      if (line.startsWith('data: ') && !line.includes('[DONE]')) {
+    const { done, value } = await reader.read()
+    if (done) break
+    const lines = dec.decode(value).split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      if (line.indexOf('data: ') === 0 && line.indexOf('[DONE]') === -1) {
         try {
-          const d = JSON.parse(line.slice(6));
-          const text = d.choices?.[0]?.delta?.content;
-          if (text) { full += text; onChunk(full); }
-        } catch {}
+          const d = JSON.parse(line.slice(6))
+          const t = d.choices && d.choices[0] && d.choices[0].delta && d.choices[0].delta.content
+          if (t) { full += t; onChunk(full) }
+        } catch(e) {}
       }
     }
   }
-  return full;
+  return full
 }
 
-function fmt(t) {
+function clean(t) {
   return t
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/^#{1,3} (.+)$/gm, `<span style="font-weight:700;color:#f59e0b;display:block;margin:8px 0 3px;font-size:15px">$1</span>`)
-    .replace(/^---$/gm, `<hr style="border:none;border-top:1px solid rgba(42,37,80,0.6);margin:12px 0"/>`)
-    .replace(/\n/g, '<br/>');
+    .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
+    .replace(/\n/g, '<br/>')
 }
 
-function Dots({ color }) {
-  return (
-    <div style={{ display:'flex', gap:5, padding:'10px 14px', alignItems:'center' }}>
-      {[0,1,2].map(i => (
-        <div key={i} style={{ width:7, height:7, borderRadius:'50%', background:color, opacity:0.8, animation:`hbounce 1.2s ${i*0.2}s infinite ease-in-out` }} />
-      ))}
-    </div>
-  );
+function uid() { return Math.random().toString(36).slice(2) }
+
+function Bubble(props) {
+  var m = props.m
+  var rc = props.rc
+  var u = m.role === 'user'
+  return React.createElement('div', {
+    style: { display:'flex', flexDirection:u?'row-reverse':'row', gap:10, marginBottom:16, alignItems:'flex-start' }
+  },
+    React.createElement('div', {
+      style: { width:32, height:32, borderRadius:'50%', background:u?'rgba(26,23,48,0.9)':rc+'33', border:'1.5px solid '+(u?'rgba(42,37,80,0.8)':rc), display:'flex', alignItems:'center', justifyContent:'center', color:u?H.sub:rc, fontWeight:700, fontSize:13, flexShrink:0 }
+    }, u?'U':'H'),
+    React.createElement('div', {
+      style: { maxWidth:'78%', background:u?'rgba(26,23,48,0.75)':'rgba(12,10,26,0.75)', border:'1px solid '+(u?'rgba(42,37,80,0.6)':rc+'30'), borderRadius:u?'14px 3px 14px 14px':'3px 14px 14px 14px', padding:'10px 14px', color:H.txt, fontSize:14, lineHeight:1.7, backdropFilter:'blur(12px)' },
+      dangerouslySetInnerHTML: { __html: clean(m.content) }
+    })
+  )
 }
 
-function Msg({ m, rc }) {
-  const u = m.role === 'user';
-  return (
-    <div style={{ display:'flex', flexDirection:u?'row-reverse':'row', gap:10, marginBottom:18, alignItems:'flex-start', animation:'hfade 0.25s ease' }}>
-      <div style={{ width:34, height:34, borderRadius:'50%', background:u?'rgba(26,23,48,0.9)':`${rc}22`, border:`1.5px solid ${u?'rgba(42,37,80,0.9)':rc}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, flexShrink:0, color:u?HORIZON.sub:rc, fontWeight:700, backdropFilter:'blur(8px)' }}>
-        {u ? 'U' : 'H'}
-      </div>
-      <div style={{ maxWidth:'80%', background:u?'rgba(26,23,48,0.72)':'rgba(12,10,26,0.72)', border:`1px solid ${u?'rgba(42,37,80,0.7)':rc+'35'}`, borderRadius:u?'16px 3px 16px 16px':'3px 16px 16px 16px', padding:'11px 15px', color:HORIZON.text, fontSize:14, lineHeight:1.7, backdropFilter:'blur(14px)' }}
-        dangerouslySetInnerHTML={{ __html: fmt(m.content) }} />
-    </div>
-  );
+function Dots(props) {
+  return React.createElement('div', { style:{ display:'flex', gap:4, padding:'10px 14px' } },
+    [0,1,2].map(function(i) {
+      return React.createElement('div', {
+        key: i,
+        style: { width:7, height:7, borderRadius:'50%', background:props.color, animation:'hb 1.2s '+(i*0.2)+'s infinite ease-in-out' }
+      })
+    })
+  )
 }
 
-const STARS = [
-  [8,12,0],[5,28,0.4],[12,45,0.8],[4,63,1.1],[9,78,0.2],
-  [18,8,1.4],[15,55,0.6],[22,88,1.8],[3,92,0.9],[25,35,1.2],
-  [7,70,0.5],[20,20,1.6],[6,40,2.0],[14,85,0.3],[10,60,1.0],
-];
+var STARS = [[8,12,0],[5,28,0.4],[12,45,0.8],[4,63,1.1],[9,78,0.2],[18,8,1.4],[15,55,0.6],[22,88,1.8],[3,92,0.9],[25,35,1.2]]
 
-export default function HorizonAI() {
-  const [role, setRole]           = useState('general');
-  const [mode, setMode]           = useState('chat');
-  const [msgs, setMsgs]           = useState([]);
-  const [input, setInput]         = useState('');
-  const [loading, setLoading]     = useState(false);
-  const [streaming, setStreaming] = useState('');
-  const [chats, setChats]         = useState(() => { try { return JSON.parse(localStorage.getItem('horizon_chats') || '[]'); } catch { return []; } });
-  const [cid, setCid]             = useState(null);
-  const [sidebar, setSidebar]     = useState(false);
-  const [wfSteps, setWfSteps]     = useState([]);
-  const [wfStep, setWfStep]       = useState(0);
-  const [voiceOn, setVoiceOn]     = useState(false);
-  const [settings, setSettings]   = useState(false);
-  const bottomRef = useRef(null);
-  const inputRef  = useRef(null);
-  const srRef     = useRef(null);
-  const R  = ROLES[role];
-  const rc = R.color;
+export default function App() {
+  var roleKey = useState('general')
+  var role = roleKey[0]; var setRole = roleKey[1]
+  var modeS = useState('chat')
+  var mode = modeS[0]; var setMode = modeS[1]
+  var msgsS = useState([])
+  var msgs = msgsS[0]; var setMsgs = msgsS[1]
+  var inputS = useState('')
+  var input = inputS[0]; var setInput = inputS[1]
+  var loadS = useState(false)
+  var loading = loadS[0]; var setLoading = loadS[1]
+  var strmS = useState('')
+  var streaming = strmS[0]; var setStreaming = strmS[1]
+  var chatsS = useState(function() { try { return JSON.parse(localStorage.getItem('hzchats')||'[]') } catch(e) { return [] } })
+  var chats = chatsS[0]; var setChats = chatsS[1]
+  var cidS = useState(null)
+  var cid = cidS[0]; var setCid = cidS[1]
+  var sideS = useState(false)
+  var sidebar = sideS[0]; var setSidebar = sideS[1]
+  var settS = useState(false)
+  var settings = settS[0]; var setSettings = settS[1]
+  var wfS = useState([])
+  var wfSteps = wfS[0]; var setWfSteps = wfS[1]
+  var wfStepS = useState(0)
+  var wfStep = wfStepS[0]; var setWfStep = wfStepS[1]
 
-  useEffect(() => { localStorage.setItem('horizon_chats', JSON.stringify(chats)); }, [chats]);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:'smooth' }); }, [msgs, streaming]);
-  useEffect(() => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SR) {
-      srRef.current = new SR();
-      srRef.current.onresult = e => { setInput(e.results[0][0].transcript); setVoiceOn(false); };
-      srRef.current.onend = () => setVoiceOn(false);
+  var bottomRef = useRef(null)
+  var inputRef = useRef(null)
+
+  var R = ROLES[role]
+  var rc = R.color
+
+  useEffect(function() { localStorage.setItem('hzchats', JSON.stringify(chats)) }, [chats])
+  useEffect(function() { if(bottomRef.current) bottomRef.current.scrollIntoView({behavior:'smooth'}) }, [msgs, streaming])
+
+  function getSys(m) {
+    if (m === 'agent') return AGENT
+    if (m === 'image') return R.system + '\n\n' + IMGPROMPT
+    return R.system
+  }
+
+  function newChat() {
+    var id = uid()
+    setChats(function(p) { return [{id:id,title:'New Chat',messages:[],role:role,ts:Date.now()}].concat(p) })
+    setCid(id); setMsgs([]); setWfSteps([]); setWfStep(0); setSidebar(false)
+    setTimeout(function() { if(inputRef.current) inputRef.current.focus() }, 80)
+  }
+
+  function loadChat(c) { setCid(c.id); setMsgs(c.messages); setRole(c.role||'general'); setSidebar(false) }
+
+  function delChat(id, e) {
+    e.stopPropagation()
+    setChats(function(p) { return p.filter(function(c) { return c.id !== id }) })
+    if (cid === id) { setCid(null); setMsgs([]) }
+  }
+
+  var send = useCallback(function(txt) {
+    var text = (txt || input).trim()
+    if (!text || loading) return
+    setInput('')
+    var am = mode
+    var l = text.toLowerCase()
+    if (mode === 'chat') {
+      if (l.indexOf('image') !== -1 || l.indexOf('midjourney') !== -1) am = 'image'
+      else if (l.indexOf('multi-agent') !== -1) am = 'agent'
     }
-  }, []);
+    var um = { id:uid(), role:'user', content:text }
+    var nm = msgs.concat([um])
+    setMsgs(nm); setLoading(true); setStreaming('')
+    var apiMsgs = nm.map(function(x) { return { role: x.role === 'user' ? 'user' : 'assistant', content: x.content } })
+    ask(apiMsgs, getSys(am), function(p) { setStreaming(p) }).then(function(final) {
+      var a = { id:uid(), role:'assistant', content:final }
+      var done = nm.concat([a])
+      setMsgs(done); setStreaming('')
+      var chatId = cid || uid()
+      if (!cid) setCid(chatId)
+      setChats(function(p) {
+        var ex = p.find(function(c) { return c.id === chatId })
+        if (ex) return p.map(function(c) { return c.id === chatId ? Object.assign({}, c, {messages:done, title:c.title==='New Chat'?text.slice(0,38):c.title}) : c })
+        return [{id:chatId, title:text.slice(0,38), messages:done, role:role, ts:Date.now()}].concat(p)
+      })
+      setLoading(false)
+    }).catch(function(err) {
+      setMsgs(function(p) { return p.concat([{id:uid(), role:'assistant', content:'Error: '+err.message}]) })
+      setStreaming(''); setLoading(false)
+    })
+  }, [input, msgs, loading, mode, role, cid])
 
-  const speak = t => { if ('speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(t.replace(/<[^>]*>/g,'').slice(0,500)); u.rate=1.05; window.speechSynthesis.speak(u); } };
-  const newChat = () => { const id = Math.random().toString(36).slice(2); setChats(p=>[{id,title:'New Chat',messages:[],role,mode,ts:Date.now()},...p]); setCid(id); setMsgs([]); setWfSteps([]); setWfStep(0); setSidebar(false); setTimeout(()=>inputRef.current?.focus(),80); };
-  const loadChat = c => { setCid(c.id); setMsgs(c.messages); setRole(c.role||'general'); setMode(c.mode||'chat'); setSidebar(false); };
-  const delChat  = (id,e) => { e.stopPropagation(); setChats(p=>p.filter(c=>c.id!==id)); if(cid===id){setCid(null);setMsgs([]);} };
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
+  }
 
-  const sysFor = useCallback(m => {
-    if (m==='agent') return AGENT_SYS;
-    if (m==='image') return R.system + '\n\n' + IMG_SYS;
-    return R.system;
-  }, [R]);
+  function btn(bg, sm) {
+    return { background:bg, border:'none', borderRadius:sm?8:12, padding:sm?'5px 10px':'10px 16px', color:'#fff', cursor:'pointer', fontSize:sm?12:14, fontWeight:600, display:'flex', alignItems:'center', gap:4, transition:'all 0.15s', whiteSpace:'nowrap' }
+  }
+  function pill(on, c) {
+    return { padding:'5px 12px', borderRadius:20, border:'1px solid '+(on?c:H.bdr), background:on?c+'22':'rgba(26,23,48,0.5)', color:on?c:H.mut, cursor:'pointer', fontSize:12, fontWeight:600 }
+  }
 
-  const send = useCallback(async txt => {
-    const text = (txt || input).trim();
-    if (!text || loading) return;
-    setInput('');
-    let am = mode;
-    if (mode==='chat') { const l=text.toLowerCase(); if(l.includes('image')||l.includes('midjourney'))am='image'; else if(l.includes('multi-agent'))am='agent'; }
-    const um = { id:Math.random().toString(36).slice(2), role:'user', content:text };
-    const nm = [...msgs, um];
-    setMsgs(nm); setLoading(true); setStreaming('');
-    try {
-      let final = '';
-      await callClaude(nm.map(m=>({role:m.role==='user'?'user':'assistant',content:m.content})), sysFor(am), p=>{setStreaming(p);final=p;});
-      const a = { id:Math.random().toString(36).slice(2), role:'assistant', content:final };
-      const done = [...nm, a];
-      setMsgs(done); setStreaming('');
-      if (voiceOn) speak(final);
-      const chatId = cid || Math.random().toString(36).slice(2);
-      if (!cid) setCid(chatId);
-      setChats(p => { const ex=p.find(c=>c.id===chatId); if(ex) return p.map(c=>c.id===chatId?{...c,messages:done,title:c.title==='New Chat'?text.slice(0,38):c.title}:c); return [{id:chatId,title:text.slice(0,38),messages:done,role,mode,ts:Date.now()},...p]; });
-    } catch(err) {
-      setMsgs(p=>[...p,{id:Math.random().toString(36).slice(2),role:'assistant',content:`Error: ${err.message}`}]);
-      setStreaming('');
-    }
-    setLoading(false);
-  }, [input,msgs,loading,mode,role,cid,sysFor,voiceOn]);
+  return React.createElement('div', { style:{ display:'flex', height:'100vh', color:H.txt, fontFamily:"'Inter',system-ui,sans-serif", overflow:'hidden', position:'relative' } },
 
-  const planWf = async () => {
-    const goal = input.trim(); if (!goal) return; setInput('');
-    const um = { id:Math.random().toString(36).slice(2), role:'user', content:`Workflow Goal: ${goal}` };
-    const nm = [...msgs, um]; setMsgs(nm); setLoading(true); setStreaming('');
-    try {
-      let plan = '';
-      await callClaude([{role:'user',content:`Break into 3-5 numbered steps (list only, no preamble): "${goal}"`}], R.system, p=>{setStreaming(p);plan=p;});
-      const steps = plan.split('\n').filter(l=>/^\d+\./.test(l.trim())).map(l=>l.replace(/^\d+\.\s*/,'').trim());
-      if (!steps.length) { setMsgs(p=>[...p,{id:Math.random().toString(36).slice(2),role:'assistant',content:'Could not parse steps. Try rephrasing your goal.'}]); setStreaming(''); setLoading(false); return; }
-      setWfSteps(steps); setWfStep(0);
-      const a = { id:Math.random().toString(36).slice(2), role:'assistant', content:`**Workflow Plan (${steps.length} steps):**\n\n${steps.map((s,i)=>`${i+1}. ${s}`).join('\n')}\n\n**Step 1 is ready — hit Execute to begin.**` };
-      setMsgs([...nm,a]); setStreaming(''); setMode('workflow');
-    } catch(err) { setMsgs(p=>[...p,{id:Math.random().toString(36).slice(2),role:'assistant',content:`Error: ${err.message}`}]); setStreaming(''); }
-    setLoading(false);
-  };
+    React.createElement('style', {}, [
+      "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');",
+      "*{box-sizing:border-box;margin:0;padding:0}",
+      "::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(42,37,80,0.8);border-radius:4px}",
+      "@keyframes hb{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-6px)}}",
+      "@keyframes tw{0%,100%{opacity:0.15}50%{opacity:1}}",
+      "@keyframes ps{0%,100%{box-shadow:0 0 40px 15px rgba(245,158,11,0.7),0 0 80px 30px rgba(249,115,22,0.4)}50%{box-shadow:0 0 60px 25px rgba(245,158,11,0.9),0 0 110px 45px rgba(249,115,22,0.55)}}",
+      "@keyframes gl{0%,100%{opacity:0.5}50%{opacity:1}}",
+      ".hci:hover{background:rgba(26,23,48,0.85)!important}",
+      "textarea:focus{outline:none!important}select:focus{outline:none}button:active{transform:scale(0.97)}",
+    ].join('')),
 
-  const execStep = async () => {
-    if (wfStep>=wfSteps.length||loading) return;
-    const step = wfSteps[wfStep];
-    const um = { id:Math.random().toString(36).slice(2), role:'user', content:`Execute Step ${wfStep+1}: ${step}` };
-    const nm = [...msgs, um]; setMsgs(nm); setLoading(true); setStreaming('');
-    try {
-      let final = '';
-      const sys = R.system + `\nExecute step ${wfStep+1}/${wfSteps.length}: "${step}". Be detailed and practical.`;
-      await callClaude(nm.map(m=>({role:m.role==='user'?'user':'assistant',content:m.content})), sys, p=>{setStreaming(p);final=p;});
-      const next=wfStep+1; const done=next>=wfSteps.length;
-      const suffix = done?'\n\n**Workflow complete!**':`\n\n**Next: Step ${next+1} — ${wfSteps[next]}**`;
-      const a = { id:Math.random().toString(36).slice(2), role:'assistant', content:final+suffix };
-      setMsgs([...nm,a]); setStreaming('');
-      if (!done) setWfStep(next); else { setWfSteps([]); setWfStep(0); setMode('chat'); }
-    } catch(err) { setMsgs(p=>[...p,{id:Math.random().toString(36).slice(2),role:'assistant',content:`Error: ${err.message}`}]); setStreaming(''); }
-    setLoading(false);
-  };
+    // BACKGROUND
+    React.createElement('div', { style:{ position:'fixed', inset:0, zIndex:0, pointerEvents:'none', overflow:'hidden' } },
+      React.createElement('div', { style:{ position:'absolute', inset:0, background:'#0c0a1a' } }),
+      React.createElement('div', { style:{ position:'absolute', inset:0, background:'radial-gradient(ellipse 130% 65% at 50% 100%,#f97316 0%,#fb7185 16%,#8b5cf6 38%,#1a0a3a 62%,#0c0a1a 100%)' } }),
+      React.createElement('div', { style:{ position:'absolute', inset:0, background:'linear-gradient(to bottom,rgba(12,10,26,0.5) 0%,transparent 50%)' } }),
+      React.createElement('div', { style:{ position:'absolute', bottom:0, left:'50%', transform:'translateX(-50%)', width:'900px', height:'420px', background:'radial-gradient(ellipse 80% 55% at 50% 100%,#fde68a 0%,#f59e0b 14%,#f97316 30%,#fb7185 52%,transparent 72%)', filter:'blur(38px)', opacity:0.8 } }),
+      React.createElement('div', { style:{ position:'absolute', bottom:0, left:0, right:0, height:'2px', background:'linear-gradient(90deg,transparent,#f59e0b 20%,#fde68a 50%,#f59e0b 80%,transparent)', boxShadow:'0 0 20px 5px rgba(245,158,11,0.9),0 0 55px 12px rgba(249,115,22,0.5)' } }),
+      React.createElement('div', { style:{ position:'absolute', bottom:'-1px', left:'50%', transform:'translateX(-50%)', width:'120px', height:'60px', borderRadius:'120px 120px 0 0', background:'radial-gradient(ellipse at 50% 100%,#fde68a 0%,#f59e0b 30%,#f97316 62%,transparent 100%)', animation:'ps 4s ease-in-out infinite' } }),
+      STARS.map(function(s, i) {
+        return React.createElement('div', { key:i, style:{ position:'absolute', top:s[0]+'%', left:s[1]+'%', width:'2px', height:'2px', borderRadius:'50%', background:'#fff', animation:'tw 3s '+s[2]+'s infinite ease-in-out' } })
+      })
+    ),
 
-  const starters = ['Build me a 30-day business plan','Critique my idea ruthlessly','Generate 5 startup ideas for 2025','Create a Midjourney prompt for a neon sunset','Help me write a confident cold outreach message'];
-  const Btn = (bg,sm=false) => ({ background:bg, border:'none', borderRadius:sm?8:12, padding:sm?'5px 11px':'10px 18px', color:'#fff', cursor:'pointer', fontSize:sm?12:14, fontWeight:600, whiteSpace:'nowrap', transition:'all 0.15s', display:'flex', alignItems:'center', gap:5 });
-  const Pill = (on,c) => ({ padding:'5px 13px', borderRadius:20, border:`1px solid ${on?c:HORIZON.border}`, background:on?c+'25':'rgba(26,23,48,0.55)', color:on?c:HORIZON.muted, cursor:'pointer', fontSize:12, fontWeight:600, transition:'all 0.15s', backdropFilter:'blur(8px)' });
+    // SIDEBAR
+    React.createElement('div', { style:{ width:sidebar?260:0, minWidth:sidebar?260:0, background:'rgba(8,6,22,0.9)', borderRight:'1px solid '+H.bdr, transition:'all 0.25s', overflow:'hidden', flexShrink:0, zIndex:20, backdropFilter:'blur(24px)' } },
+      React.createElement('div', { style:{ width:260, display:'flex', flexDirection:'column', height:'100%', padding:'16px 12px' } },
+        React.createElement('div', { style:{ display:'flex', alignItems:'center', gap:8, marginBottom:18 } },
+          React.createElement('div', { style:{ width:28, height:28, borderRadius:8, background:H.grad, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:800, color:'#fff', fontSize:13 } }, 'H'),
+          React.createElement('span', { style:{ fontWeight:800, fontSize:14, background:H.grad, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' } }, 'Horizon AI')
+        ),
+        React.createElement('button', { style:Object.assign({}, btn(H.gBtn), {justifyContent:'center',width:'100%',marginBottom:16}), onClick:newChat }, '+ New Chat'),
+        React.createElement('div', { style:{ fontSize:10, color:H.mut, fontWeight:700, textTransform:'uppercase', letterSpacing:1.2, marginBottom:8 } }, 'Chats ('+chats.length+')'),
+        React.createElement('div', { style:{ flex:1, overflowY:'auto' } },
+          chats.length === 0
+            ? React.createElement('div', { style:{ color:H.mut, fontSize:13, textAlign:'center', marginTop:20 } }, 'No chats yet')
+            : chats.map(function(c) {
+                return React.createElement('div', { key:c.id, className:'hci', onClick:function(){loadChat(c)}, style:{ padding:'7px 9px', borderRadius:8, cursor:'pointer', marginBottom:3, background:cid===c.id?'rgba(26,23,48,0.9)':'transparent', border:'1px solid '+(cid===c.id?rc+'40':'transparent'), display:'flex', justifyContent:'space-between', alignItems:'center', transition:'all 0.15s' } },
+                  React.createElement('div', { style:{ flex:1, overflow:'hidden' } },
+                    React.createElement('div', { style:{ fontSize:12, color:H.txt, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' } }, c.title),
+                    React.createElement('div', { style:{ fontSize:11, color:H.mut } }, ROLES[c.role] ? ROLES[c.role].label : '')
+                  ),
+                  React.createElement('button', { onClick:function(e){delChat(c.id,e)}, style:{ background:'none', border:'none', color:H.mut, cursor:'pointer', fontSize:13 } }, 'x')
+                )
+              })
+        ),
+        React.createElement('div', { style:{ paddingTop:10, borderTop:'1px solid '+H.bdr, textAlign:'center' } },
+          React.createElement('div', { style:{ fontSize:11, color:H.mut } }, 'Horizon AI v2.0')
+        )
+      )
+    ),
 
-  return (
-    <div style={{ display:'flex', height:'100vh', color:HORIZON.text, fontFamily:"'Inter',system-ui,sans-serif", overflow:'hidden', position:'relative' }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-        *{box-sizing:border-box;margin:0;padding:0}
-        ::-webkit-scrollbar{width:4px}
-        ::-webkit-scrollbar-thumb{background:rgba(42,37,80,0.8);border-radius:4px}
-        @keyframes hbounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-6px)}}
-        @keyframes hfade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-        @keyframes twinkle{0%,100%{opacity:0.15;transform:scale(1)}50%{opacity:1;transform:scale(2)}}
-        @keyframes pulseSun{0%,100%{box-shadow:0 0 40px 15px rgba(245,158,11,0.7),0 0 80px 30px rgba(249,115,22,0.4),0 0 140px 50px rgba(251,113,133,0.25)}50%{box-shadow:0 0 60px 25px rgba(245,158,11,0.9),0 0 110px 45px rgba(249,115,22,0.55),0 0 180px 70px rgba(251,113,133,0.35)}}
-        @keyframes hglow{0%,100%{opacity:0.6}50%{opacity:1}}
-        .hci:hover{background:rgba(26,23,48,0.85)!important}
-        textarea:focus{outline:none!important}
-        select:focus{outline:none}
-        button:active{transform:scale(0.97)}
-        .hbtn:hover{opacity:0.85}
-        .starter:hover{background:rgba(42,37,80,0.6)!important}
-      `}</style>
+    // MAIN
+    React.createElement('div', { style:{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minWidth:0, zIndex:10, position:'relative' } },
 
-      {/* HORIZON BACKGROUND */}
-      <div style={{ position:'fixed', inset:0, zIndex:0, pointerEvents:'none', overflow:'hidden' }}>
-        <div style={{ position:'absolute', inset:0, background:'#0c0a1a' }} />
-        <div style={{ position:'absolute', inset:0, background:'radial-gradient(ellipse 130% 65% at 50% 100%, #f97316 0%, #fb7185 16%, #8b5cf6 38%, #1a0a3a 62%, #0c0a1a 100%)' }} />
-        <div style={{ position:'absolute', inset:0, background:'linear-gradient(to bottom, rgba(12,10,26,0.55) 0%, transparent 50%)' }} />
-        <div style={{ position:'absolute', bottom:0, left:'50%', transform:'translateX(-50%)', width:'960px', height:'440px', background:'radial-gradient(ellipse 80% 55% at 50% 100%, #fde68a 0%, #f59e0b 14%, #f97316 30%, #fb7185 52%, transparent 72%)', filter:'blur(40px)', opacity:0.8 }} />
-        <div style={{ position:'absolute', bottom:0, left:0, right:0, height:'2px', background:'linear-gradient(90deg,transparent 0%,#f59e0b 20%,#fde68a 50%,#f59e0b 80%,transparent 100%)', boxShadow:'0 0 20px 5px rgba(245,158,11,0.9), 0 0 55px 12px rgba(249,115,22,0.5), 0 0 110px 25px rgba(251,113,133,0.3)' }} />
-        <div style={{ position:'absolute', bottom:'-1px', left:'50%', transform:'translateX(-50%)', width:'130px', height:'65px', borderRadius:'130px 130px 0 0', background:'radial-gradient(ellipse at 50% 100%, #fde68a 0%, #f59e0b 30%, #f97316 62%, transparent 100%)', animation:'pulseSun 4s ease-in-out infinite' }} />
-        {STARS.map(([top,left,delay],i) => (
-          <div key={i} style={{ position:'absolute', top:`${top}%`, left:`${left}%`, width:'2px', height:'2px', borderRadius:'50%', background:'#fff', animation:`twinkle 3s ${delay}s infinite ease-in-out` }} />
-        ))}
-      </div>
+      // HEADER
+      React.createElement('div', { style:{ padding:'10px 14px', borderBottom:'1px solid '+H.bdr, display:'flex', alignItems:'center', gap:10, background:'rgba(8,6,22,0.75)', flexShrink:0, backdropFilter:'blur(20px)' } },
+        React.createElement('button', { onClick:function(){setSidebar(function(s){return !s})}, style:{ background:'none', border:'none', color:H.mut, cursor:'pointer', fontSize:18 } }, '='),
+        React.createElement('div', { style:{ display:'flex', alignItems:'center', gap:7 } },
+          React.createElement('div', { style:{ width:24, height:24, borderRadius:6, background:H.grad, display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:800, color:'#fff' } }, 'H'),
+          React.createElement('span', { style:{ fontSize:15, fontWeight:800, background:H.grad, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' } }, 'Horizon AI')
+        ),
+        React.createElement('div', { style:{ flex:1 } }),
+        React.createElement('select', { value:role, onChange:function(e){setRole(e.target.value)}, style:{ background:'rgba(18,16,42,0.8)', border:'1px solid '+H.bdr, color:H.txt, borderRadius:8, padding:'5px 8px', fontSize:12, cursor:'pointer' } },
+          Object.entries(ROLES).map(function(entry) {
+            return React.createElement('option', { key:entry[0], value:entry[0] }, entry[1].label)
+          })
+        ),
+        React.createElement('div', { style:{ width:8, height:8, borderRadius:'50%', background:rc, boxShadow:'0 0 8px '+rc, animation:'gl 2s infinite' } })
+      ),
 
-      {/* SIDEBAR */}
-      <div style={{ width:sidebar?265:0, minWidth:sidebar?265:0, background:'rgba(8,6,22,0.88)', borderRight:`1px solid ${HORIZON.border}`, transition:'all 0.25s ease', overflow:'hidden', display:'flex', flexDirection:'column', flexShrink:0, zIndex:20, backdropFilter:'blur(24px)' }}>
-        <div style={{ width:265, display:'flex', flexDirection:'column', height:'100%', padding:'18px 13px' }}>
-          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:20 }}>
-            <div style={{ width:30, height:30, borderRadius:8, background:HORIZON.grad, display:'flex', alignItems:'center', justifyContent:'center', fontSize:14, fontWeight:800, color:'#fff' }}>H</div>
-            <span style={{ fontWeight:800, fontSize:15, background:HORIZON.grad, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>Horizon AI</span>
-          </div>
-          <button className="hbtn" style={{ ...Btn(HORIZON.gradBtn), justifyContent:'center', width:'100%', marginBottom:18 }} onClick={newChat}>+ New Chat</button>
-          <div style={{ fontSize:10, color:HORIZON.muted, fontWeight:700, textTransform:'uppercase', letterSpacing:1.2, marginBottom:8 }}>Conversations ({chats.length})</div>
-          <div style={{ flex:1, overflowY:'auto' }}>
-            {chats.length===0 && <div style={{ color:HORIZON.muted, fontSize:13, textAlign:'center', marginTop:24 }}>No chats yet</div>}
-            {chats.map(c => (
-              <div key={c.id} className="hci" onClick={()=>loadChat(c)} style={{ padding:'8px 10px', borderRadius:9, cursor:'pointer', marginBottom:4, background:cid===c.id?'rgba(26,23,48,0.9)':'transparent', border:`1px solid ${cid===c.id?rc+'50':'transparent'}`, display:'flex', justifyContent:'space-between', alignItems:'center', transition:'all 0.15s' }}>
-                <div style={{ flex:1, overflow:'hidden' }}>
-                  <div style={{ fontSize:13, color:HORIZON.text, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{c.title}</div>
-                  <div style={{ fontSize:11, color:HORIZON.muted, marginTop:1 }}>{ROLES[c.role]?.icon} {ROLES[c.role]?.label}</div>
-                </div>
-                <button onClick={e=>delChat(c.id,e)} style={{ background:'none', border:'none', color:HORIZON.muted, cursor:'pointer', fontSize:14, padding:'0 2px', flexShrink:0 }}>x</button>
-              </div>
-            ))}
-          </div>
-          <div style={{ paddingTop:12, borderTop:`1px solid ${HORIZON.border}`, textAlign:'center' }}>
-            <div style={{ fontSize:11, color:HORIZON.muted }}>Horizon AI v2.0</div>
-          </div>
-        </div>
-      </div>
+      // MODE PILLS
+      React.createElement('div', { style:{ padding:'7px 14px', display:'flex', gap:6, borderBottom:'1px solid '+H.bdr, background:'rgba(8,6,22,0.55)', flexWrap:'wrap', alignItems:'center', backdropFilter:'blur(16px)' } },
+        [['chat','Chat'],['agent','Multi-Agent'],['image','Image'],['workflow','Workflow']].map(function(item) {
+          return React.createElement('button', { key:item[0], style:pill(mode===item[0],rc), onClick:function(){setMode(item[0])} }, item[1])
+        })
+      ),
 
-      {/* MAIN */}
-      <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minWidth:0, zIndex:10, position:'relative' }}>
-        {/* Header */}
-        <div style={{ padding:'11px 16px', borderBottom:`1px solid ${HORIZON.border}`, display:'flex', alignItems:'center', gap:10, background:'rgba(8,6,22,0.75)', flexShrink:0, backdropFilter:'blur(24px)' }}>
-          <button onClick={()=>setSidebar(s=>!s)} style={{ background:'none', border:'none', color:HORIZON.muted, cursor:'pointer', fontSize:20, lineHeight:1, padding:2 }}>|||</button>
-          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-            <div style={{ width:26, height:26, borderRadius:7, background:HORIZON.grad, display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:800, color:'#fff' }}>H</div>
-            <span style={{ fontSize:16, fontWeight:800, background:HORIZON.grad, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>Horizon AI</span>
-          </div>
-          <div style={{ flex:1 }} />
-          <select value={role} onChange={e=>setRole(e.target.value)} style={{ background:'rgba(18,16,42,0.8)', border:`1px solid ${HORIZON.border}`, color:HORIZON.text, borderRadius:9, padding:'6px 10px', fontSize:13, cursor:'pointer', fontFamily:'inherit' }}>
-            {Object.entries(ROLES).map(([k,r]) => <option key={k} value={k}>{r.icon} {r.label}</option>)}
-          </select>
-          <div style={{ width:9, height:9, borderRadius:'50%', background:rc, boxShadow:`0 0 10px ${rc}`, flexShrink:0, animation:'hglow 2s infinite' }} />
-        </div>
+      // MESSAGES
+      React.createElement('div', { style:{ flex:1, overflowY:'auto', padding:'20px 16px' } },
+        msgs.length === 0
+          ? React.createElement('div', { style:{ textAlign:'center', paddingTop:48 } },
+              React.createElement('div', { style:{ width:72, height:72, borderRadius:'50%', background:H.grad, margin:'0 auto 14px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:26, fontWeight:800, color:'#fff', boxShadow:'0 0 44px rgba(249,115,22,0.5)' } }, 'H'),
+              React.createElement('div', { style:{ fontSize:26, fontWeight:800, background:'linear-gradient(135deg,#fde68a,#f59e0b,#f97316,#fb7185,#c084fc)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', marginBottom:6 } }, 'Horizon AI'),
+              React.createElement('div', { style:{ color:H.mut, fontSize:13, marginBottom:3 } },
+                React.createElement('span', { style:{ color:rc, fontWeight:600 } }, R.label),
+                ' - '+mode+' mode'
+              ),
+              React.createElement('div', { style:{ color:H.mut, fontSize:12, maxWidth:340, margin:'10px auto 0', lineHeight:1.7 } },
+                mode==='agent' ? 'Multi-Agent: Planner, Executor, Critic.' :
+                mode==='image' ? 'Describe your vision for an image prompt.' :
+                mode==='workflow' ? 'Enter a goal to plan and execute.' :
+                'Ask anything. I adapt to your role.'
+              ),
+              React.createElement('div', { style:{ display:'flex', flexWrap:'wrap', gap:7, justifyContent:'center', marginTop:20, maxWidth:460, margin:'20px auto 0' } },
+                ['Build a 30-day business plan','Critique my idea ruthlessly','5 startup ideas for 2025','Midjourney prompt for neon sunset','Write a cold outreach message'].map(function(s) {
+                  return React.createElement('button', { key:s, onClick:function(){setInput(s);if(inputRef.current)inputRef.current.focus()}, style:{ background:'rgba(18,16,42,0.6)', border:'1px solid '+H.bdr, borderRadius:16, padding:'5px 12px', color:H.sub, cursor:'pointer', fontSize:11 } }, s)
+                })
+              )
+            )
+          : null,
+        msgs.map(function(m) { return React.createElement(Bubble, { key:m.id, m:m, rc:rc }) }),
+        loading && streaming
+          ? React.createElement('div', { style:{ display:'flex', gap:10, marginBottom:16, alignItems:'flex-start' } },
+              React.createElement('div', { style:{ width:32, height:32, borderRadius:'50%', background:rc+'33', border:'1.5px solid '+rc, display:'flex', alignItems:'center', justifyContent:'center', color:rc, fontWeight:700, fontSize:13, flexShrink:0 } }, 'H'),
+              React.createElement('div', { style:{ maxWidth:'78%', background:'rgba(12,10,26,0.75)', border:'1px solid '+rc+'30', borderRadius:'3px 14px 14px 14px', padding:'10px 14px', color:H.txt, fontSize:14, lineHeight:1.7, backdropFilter:'blur(12px)' }, dangerouslySetInnerHTML:{ __html: clean(streaming) } })
+            )
+          : null,
+        loading && !streaming
+          ? React.createElement('div', { style:{ display:'flex', gap:10, alignItems:'flex-start' } },
+              React.createElement('div', { style:{ width:32, height:32, borderRadius:'50%', background:rc+'33', border:'1.5px solid '+rc, display:'flex', alignItems:'center', justifyContent:'center', color:rc, fontWeight:700, fontSize:13 } }, 'H'),
+              React.createElement('div', { style:{ background:'rgba(12,10,26,0.75)', border:'1px solid '+rc+'30', borderRadius:'3px 14px 14px 14px', backdropFilter:'blur(12px)' } },
+                React.createElement(Dots, { color:rc })
+              )
+            )
+          : null,
+        React.createElement('div', { ref:bottomRef })
+      ),
 
-        {/* Mode pills */}
-        <div style={{ padding:'8px 16px', display:'flex', gap:6, borderBottom:`1px solid ${HORIZON.border}`, background:'rgba(8,6,22,0.6)', flexWrap:'wrap', alignItems:'center' }}>
-          {[['chat','Chat'],['agent','Multi-Agent'],['image','Image Prompt'],['workflow','Workflow']].map(([m,l]) => (
-            <button key={m} style={Pill(mode===m,rc)} onClick={()=>setMode(m)}>{l}</button>
-          ))}
-          <div style={{ flex:1 }} />
-          <button onClick={()=>{ if(srRef.current){setVoiceOn(true);srRef.current.start();} }} style={{ ...Pill(voiceOn,'#ec4899') }}>
-            {voiceOn ? 'Listening...' : 'Voice'}
-          </button>
-        </div>
+      // WORKFLOW BAR
+      wfSteps.length > 0
+        ? React.createElement('div', { style:{ padding:'8px 14px', background:'rgba(8,6,22,0.75)', borderTop:'1px solid '+H.bdr, display:'flex', alignItems:'center', gap:10, backdropFilter:'blur(16px)' } },
+            React.createElement('span', { style:{ color:H.sub, fontSize:12, flexShrink:0 } }, 'Step '+(wfStep+1)+'/'+wfSteps.length),
+            React.createElement('div', { style:{ flex:1, background:'rgba(26,23,48,0.6)', borderRadius:4, height:4 } },
+              React.createElement('div', { style:{ width:(wfStep/wfSteps.length*100)+'%', height:'100%', background:H.gBtn, borderRadius:4, transition:'width 0.4s' } })
+            ),
+            React.createElement('button', { style:btn(loading?'rgba(42,37,80,0.7)':H.gBtn, true), onClick:function(){
+              if (wfStep >= wfSteps.length || loading) return
+              var step = wfSteps[wfStep]
+              var um = { id:uid(), role:'user', content:'Execute Step '+(wfStep+1)+': '+step }
+              var nm = msgs.concat([um])
+              setMsgs(nm); setLoading(true); setStreaming('')
+              var sys = R.system + '\nExecute step '+(wfStep+1)+'/'+wfSteps.length+': '+step+'. Be detailed.'
+              ask(nm.map(function(x){return{role:x.role==='user'?'user':'assistant',content:x.content}}), sys, function(p){setStreaming(p)})
+              .then(function(final) {
+                var next = wfStep+1; var done = next >= wfSteps.length
+                var suffix = done ? '\n\nWorkflow complete!' : '\n\nNext: Step '+(next+1)+' - '+wfSteps[next]
+                setMsgs(nm.concat([{id:uid(),role:'assistant',content:final+suffix}])); setStreaming('')
+                if (!done) setWfStep(next); else { setWfSteps([]); setWfStep(0); setMode('chat') }
+                setLoading(false)
+              }).catch(function(err){ setMsgs(function(p){return p.concat([{id:uid(),role:'assistant',content:'Error: '+err.message}])}); setStreaming(''); setLoading(false) })
+            }, disabled:loading }, loading?'Running...':'Execute Step '+(wfStep+1))
+          )
+        : null,
 
-        {/* Messages */}
-        <div style={{ flex:1, overflowY:'auto', padding:'24px 20px' }}>
-          {msgs.length===0 && (
-            <div style={{ textAlign:'center', paddingTop:50 }}>
-              <div style={{ width:80, height:80, borderRadius:'50%', background:HORIZON.grad, margin:'0 auto 18px', display:'flex', alignItems:'center', justifyContent:'center', fontSize:30, fontWeight:800, color:'#fff', boxShadow:'0 0 50px rgba(249,115,22,0.55)' }}>H</div>
-              <div style={{ fontSize:28, fontWeight:800, background:'linear-gradient(135deg,#fde68a,#f59e0b,#f97316,#fb7185,#c084fc)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', marginBottom:8 }}>Horizon AI</div>
-              <div style={{ color:HORIZON.muted, fontSize:14, marginBottom:4 }}>
-                <span style={{ color:rc, fontWeight:600 }}>{R.icon} {R.label}</span> · <span>{mode} mode</span>
-              </div>
-              <div style={{ color:HORIZON.muted, fontSize:13, maxWidth:380, margin:'12px auto 0', lineHeight:1.75 }}>
-                {mode==='agent' && 'Multi-Agent: Planner, Executor, Critic pipeline.'}
-                {mode==='image' && 'Describe your vision for a pro image prompt.'}
-                {mode==='workflow' && 'Enter a goal and I will plan and guide execution.'}
-                {mode==='chat' && 'Ask me anything. I adapt to your selected role.'}
-              </div>
-              <div style={{ display:'flex', flexWrap:'wrap', gap:8, justifyContent:'center', marginTop:24, maxWidth:500, margin:'24px auto 0' }}>
-                {starters.map(s => (
-                  <button key={s} className="starter" onClick={()=>{setInput(s);inputRef.current?.focus();}} style={{ background:'rgba(18,16,42,0.65)', border:`1px solid ${HORIZON.border}`, borderRadius:20, padding:'6px 14px', color:HORIZON.sub, cursor:'pointer', fontSize:12, fontWeight:500, transition:'all 0.15s' }}>{s}</button>
-                ))}
-              </div>
-            </div>
-          )}
-          {msgs.map(m => <Msg key={m.id} m={m} rc={rc} />)}
-          {loading && streaming && (
-            <div style={{ display:'flex', gap:10, marginBottom:18, alignItems:'flex-start' }}>
-              <div style={{ width:34, height:34, borderRadius:'50%', background:`${rc}22`, border:`1.5px solid ${rc}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, color:rc, fontWeight:700, flexShrink:0 }}>H</div>
-              <div style={{ maxWidth:'80%', background:'rgba(12,10,26,0.72)', border:`1px solid ${rc}35`, borderRadius:'3px 16px 16px 16px', padding:'11px 15px', color:HORIZON.text, fontSize:14, lineHeight:1.7 }} dangerouslySetInnerHTML={{ __html:fmt(streaming) }} />
-            </div>
-          )}
-          {loading && !streaming && (
-            <div style={{ display:'flex', gap:10, alignItems:'flex-start' }}>
-              <div style={{ width:34, height:34, borderRadius:'50%', background:`${rc}22`, border:`1.5px solid ${rc}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, color:rc, fontWeight:700 }}>H</div>
-              <div style={{ background:'rgba(12,10,26,0.72)', border:`1px solid ${rc}35`, borderRadius:'3px 16px 16px 16px' }}><Dots color={rc} /></div>
-            </div>
-          )}
-          <div ref={bottomRef} />
-        </div>
+      // INPUT
+      React.createElement('div', { style:{ padding:'10px 14px', borderTop:'1px solid '+H.bdr, background:'rgba(8,6,22,0.75)', flexShrink:0, backdropFilter:'blur(20px)' } },
+        React.createElement('div', { style:{ display:'flex', gap:7, alignItems:'flex-end' } },
+          React.createElement('textarea', {
+            ref: inputRef,
+            value: input,
+            onChange: function(e){setInput(e.target.value)},
+            onKeyDown: handleKey,
+            placeholder: mode==='image'?'Describe your image...':mode==='agent'?'Enter a complex task...':mode==='workflow'&&wfSteps.length===0?'Enter your goal...':'Ask '+R.label+'...',
+            rows: 1,
+            style: { flex:1, background:'rgba(18,16,42,0.8)', border:'1.5px solid rgba(42,37,80,0.7)', borderRadius:12, padding:'10px 13px', color:H.txt, fontSize:14, resize:'none', fontFamily:'inherit', lineHeight:1.5, minHeight:44, maxHeight:120, transition:'border-color 0.2s' }
+          }),
+          mode==='workflow' && wfSteps.length===0
+            ? React.createElement('button', { style:btn(H.gCool), onClick:function(){
+                var goal = input.trim(); if(!goal) return; setInput('')
+                var um = {id:uid(),role:'user',content:'Workflow Goal: '+goal}
+                var nm = msgs.concat([um]); setMsgs(nm); setLoading(true); setStreaming('')
+                ask([{role:'user',content:'Break into 3-5 numbered steps (list only): "'+goal+'"'}], R.system, function(p){setStreaming(p)})
+                .then(function(plan){
+                  var steps = plan.split('\n').filter(function(l){return /^\d+\./.test(l.trim())}).map(function(l){return l.replace(/^\d+\.\s*/,'').trim()})
+                  if (!steps.length) { setMsgs(nm.concat([{id:uid(),role:'assistant',content:'Could not parse steps. Try rephrasing.'}])); setStreaming(''); setLoading(false); return }
+                  setWfSteps(steps); setWfStep(0)
+                  setMsgs(nm.concat([{id:uid(),role:'assistant',content:'Workflow Plan ('+steps.length+' steps):\n\n'+steps.map(function(s,i){return (i+1)+'. '+s}).join('\n')+'\n\nStep 1 ready - hit Execute!'}]))
+                  setStreaming(''); setMode('workflow'); setLoading(false)
+                }).catch(function(err){ setMsgs(nm.concat([{id:uid(),role:'assistant',content:'Error: '+err.message}])); setStreaming(''); setLoading(false) })
+              }, disabled:loading||!input.trim() }, 'Plan')
+            : null,
+          React.createElement('button', { style:Object.assign({}, btn(loading?'rgba(42,37,80,0.7)':H.gBtn), {boxShadow:loading?'none':'0 0 16px rgba(249,115,22,0.35)'}), onClick:function(){send()}, disabled:loading||!input.trim() }, loading?'...':'Send'),
+          React.createElement('button', { style:{ background:'rgba(18,16,42,0.8)', border:'1.5px solid rgba(42,37,80,0.7)', borderRadius:11, padding:'10px 13px', color:H.txt, cursor:'pointer', fontSize:13 } }, 'V')
+        ),
+        React.createElement('div', { style:{ textAlign:'center', marginTop:5, color:H.mut, fontSize:11 } }, R.label+' - Enter to send - 100% free')
+      )
+    ),
 
-        {/* Workflow bar */}
-        {wfSteps.length>0 && (
-          <div style={{ padding:'9px 16px', background:'rgba(8,6,22,0.75)', borderTop:`1px solid ${HORIZON.border}`, display:'flex', alignItems:'center', gap:10 }}>
-            <span style={{ color:HORIZON.sub, fontSize:13, flexShrink:0 }}>Step {wfStep+1}/{wfSteps.length}</span>
-            <div style={{ flex:1, background:'rgba(26,23,48,0.6)', borderRadius:4, height:5 }}>
-              <div style={{ width:`${(wfStep/wfSteps.length)*100}%`, height:'100%', background:HORIZON.gradBtn, borderRadius:4, transition:'width 0.4s' }} />
-            </div>
-            <button className="hbtn" style={Btn(loading?'rgba(42,37,80,0.7)':HORIZON.gradBtn,true)} onClick={execStep} disabled={loading}>
-              {loading ? 'Running...' : `Execute Step ${wfStep+1}`}
-            </button>
-          </div>
-        )}
+    // SETTINGS FAB
+    React.createElement('button', { onClick:function(){setSettings(true)}, style:{ position:'fixed', bottom:18, right:18, background:'rgba(18,16,42,0.85)', border:'1px solid '+H.bdr, borderRadius:'50%', width:40, height:40, color:H.mut, cursor:'pointer', fontSize:16, display:'flex', alignItems:'center', justifyContent:'center', zIndex:40 } }, 'S'),
 
-        {/* Input */}
-        <div style={{ padding:'12px 16px', borderTop:`1px solid ${HORIZON.border}`, background:'rgba(8,6,22,0.75)', flexShrink:0 }}>
-          <div style={{ display:'flex', gap:8, alignItems:'flex-end' }}>
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={e=>setInput(e.target.value)}
-              onKeyDown={e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();mode==='workflow'&&wfSteps.length===0?planWf():send();} }}
-              placeholder={mode==='image'?'Describe what you want to visualise...':mode==='agent'?'Enter a complex task...':mode==='workflow'&&wfSteps.length===0?'Enter your goal...':`Ask ${R.label}...`}
-              style={{ flex:1, background:'rgba(18,16,42,0.8)', border:`1.5px solid rgba(42,37,80,0.7)`, borderRadius:13, padding:'11px 15px', color:HORIZON.text, fontSize:14, resize:'none', fontFamily:'inherit', lineHeight:1.55, minHeight:46, maxHeight:130, transition:'border-color 0.2s' }}
-              rows={1}
-            />
-            {mode==='workflow' && wfSteps.length===0 && (
-              <button className="hbtn" style={Btn(HORIZON.gradCool)} onClick={planWf} disabled={loading||!input.trim()}>Plan</button>
-            )}
-            <button className="hbtn" style={{ ...Btn(loading?'rgba(42,37,80,0.7)':HORIZON.gradBtn), boxShadow:loading?'none':'0 0 18px rgba(249,115,22,0.4)' }} onClick={()=>send()} disabled={loading||!input.trim()}>
-              {loading ? '...' : 'Send'}
-            </button>
-            <button className="hbtn" style={{ background:voiceOn?'#ec4899':'rgba(18,16,42,0.8)', border:`1.5px solid ${voiceOn?'#ec4899':HORIZON.border}`, borderRadius:12, padding:'11px 14px', color:'#fff', cursor:'pointer', fontSize:14, transition:'all 0.15s' }} onClick={()=>{ if(srRef.current){setVoiceOn(true);srRef.current.start();} }}>
-              {voiceOn ? 'O' : 'V'}
-            </button>
-          </div>
-          <div style={{ textAlign:'center', marginTop:6, color:HORIZON.muted, fontSize:11 }}>{R.icon} {R.label} · Enter to send · Shift+Enter new line</div>
-        </div>
-      </div>
-
-      {/* Settings FAB */}
-      <button onClick={()=>setSettings(true)} style={{ position:'fixed', bottom:20, right:20, background:'rgba(18,16,42,0.85)', border:`1px solid ${HORIZON.border}`, borderRadius:'50%', width:42, height:42, color:HORIZON.sub, cursor:'pointer', fontSize:17, display:'flex', alignItems:'center', justifyContent:'center', zIndex:40 }}>S</button>
-
-      {/* Settings modal */}
-      {settings && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.65)', zIndex:50, display:'flex', alignItems:'center', justifyContent:'center' }} onClick={()=>setSettings(false)}>
-          <div style={{ background:'rgba(12,10,26,0.96)', border:`1px solid ${HORIZON.border}`, borderRadius:18, padding:26, width:330, maxWidth:'90vw' }} onClick={e=>e.stopPropagation()}>
-            <div style={{ fontWeight:800, fontSize:17, background:HORIZON.grad, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', marginBottom:4 }}>Settings</div>
-            <div style={{ color:HORIZON.muted, fontSize:13, marginBottom:18 }}>Manage your Horizon AI session.</div>
-            <div style={{ fontSize:13, color:HORIZON.sub, marginBottom:6 }}>Version: <strong style={{ color:HORIZON.text }}>2.0</strong></div>
-            <div style={{ fontSize:13, color:HORIZON.sub, marginBottom:18 }}>Saved chats: <strong style={{ color:HORIZON.text }}>{chats.length}</strong></div>
-            <button className="hbtn" style={{ ...Btn('#ef4444'), width:'100%', justifyContent:'center' }} onClick={()=>{ setChats([]); setMsgs([]); setCid(null); setSettings(false); }}>Clear All History</button>
-            <button className="hbtn" style={{ ...Btn('rgba(42,37,80,0.8)'), width:'100%', justifyContent:'center', marginTop:8 }} onClick={()=>setSettings(false)}>Close</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+    // SETTINGS MODAL
+    settings
+      ? React.createElement('div', { style:{ position:'fixed', inset:0, background:'rgba(0,0,0,0.65)', zIndex:50, display:'flex', alignItems:'center', justifyContent:'center', backdropFilter:'blur(6px)' }, onClick:function(){setSettings(false)} },
+          React.createElement('div', { style:{ background:'rgba(12,10,26,0.97)', border:'1px solid '+H.bdr, borderRadius:16, padding:24, width:300, maxWidth:'90vw' }, onClick:function(e){e.stopPropagation()} },
+            React.createElement('div', { style:{ fontWeight:800, fontSize:16, background:H.grad, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', marginBottom:14 } }, 'Settings'),
+            React.createElement('div', { style:{ fontSize:12, color:H.sub, marginBottom:6 } }, 'Saved chats: '+chats.length),
+            React.createElement('button', { style:Object.assign({},btn('#ef4444'),{width:'100%',justifyContent:'center'}), onClick:function(){setChats([]);setMsgs([]);setCid(null);setSettings(false)} }, 'Clear All History'),
+            React.createElement('button', { style:Object.assign({},btn('rgba(42,37,80,0.8)'),{width:'100%',justifyContent:'center',marginTop:8}), onClick:function(){setSettings(false)} }, 'Close')
+          )
+        )
+      : null
+  )
 }
